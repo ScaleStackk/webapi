@@ -1,0 +1,21 @@
+services:
+  webapi:
+    image: "${WEBAPI_IMAGE:-questacase-webapi:latest}"
+    platform: "${DOCKER_PLATFORM:-linux/amd64}"
+    container_name: questacase-webapi
+    restart: unless-stopped
+    env_file:
+      - "${WEBAPI_ENV_FILE:-.env}"
+    environment:
+      PORT: "8080"
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8080}:8080"
+    networks:
+      - questacase
+    mem_limit: "${WEBAPI_MEMORY_LIMIT:-512m}"
+    cpus: "${WEBAPI_CPU_LIMIT:-1.0}"
+
+networks:
+  questacase:
+    external: true
+    name: "${DOCKER_NETWORK:-questacase}"
