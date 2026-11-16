@@ -79,6 +79,7 @@ export const config = Object.freeze({
     url: text("INFERENCE_API_URL", "http://inference:11434").replace(/\/+$/, ""),
     model: text("INFERENCE_MODEL", "qwen3:4b"),
     apiKey: text("INFERENCE_API_KEY") || undefined,
+    numPredict: integer("INFERENCE_NUM_PREDICT", 600, { min: 64, max: 4096 }),
     contextCharacters: integer("MAX_CONTEXT_CHARACTERS", 24_000, {
       min: 2000,
       max: 200_000,
@@ -93,11 +94,11 @@ export function missingUploadConfiguration() {
   return missing;
 }
 
-export function missingQueryConfiguration() {
+export function missingQueryConfiguration({ vector = true, graph = true } = {}) {
   const missing = [];
-  if (!config.embedding.url) missing.push("EMBEDDING_API_URL");
-  if (!config.qdrant.url) missing.push("QDRANT_URL");
+  if (vector && !config.embedding.url) missing.push("EMBEDDING_API_URL");
+  if (vector && !config.qdrant.url) missing.push("QDRANT_URL");
   if (!config.inference.url) missing.push("INFERENCE_API_URL");
-  if (!config.neo4j.password && config.neo4j.required) missing.push("NEO4J_PASSWORD");
+  if (graph && !config.neo4j.password) missing.push("NEO4J_PASSWORD");
   return missing;
 }

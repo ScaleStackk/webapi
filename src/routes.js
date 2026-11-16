@@ -30,6 +30,32 @@ function documentIds(value) {
   return [...new Set(value.map((id) => String(id).trim()).filter(Boolean))];
 }
 
+function retrievalOptions(value) {
+  if (value === undefined || value === null) return { vector: true, graph: true };
+  assert(
+    typeof value === "object" && !Array.isArray(value),
+    400,
+    "invalid_retrieval",
+    "retrieval must be an object.",
+  );
+  for (const name of ["vector", "graph"]) {
+    assert(
+      typeof value[name] === "boolean",
+      400,
+      "invalid_retrieval",
+      `retrieval.${name} must be a boolean.`,
+    );
+  }
+  const retrieval = { vector: value.vector, graph: value.graph };
+  assert(
+    retrieval.vector || retrieval.graph,
+    400,
+    "retrieval_required",
+    "Enable vector retrieval, graph retrieval, or both.",
+  );
+  return retrieval;
+}
+
 function uploadReadiness() {
   const missing = missingUploadConfiguration();
   if (missing.length) {
@@ -39,8 +65,8 @@ function uploadReadiness() {
   }
 }
 
-function queryReadiness() {
-  const missing = missingQueryConfiguration();
+function queryReadiness(retrieval) {
+  const missing = missingQueryConfiguration(retrieval);
   if (missing.length) {
     throw new ApiError(503, "query_not_configured", "The query pipeline is not configured.", {
       missing,
@@ -149,57 +175,59 @@ async function completeUpload(request, response) {
 }
 
 async function queryJudgments(request, response) {
-  queryReadiness();
   const body = await readJson(request, config.maxJsonBytes);
   const question = String(body.question || "").trim();
   const judgmentIds = documentIds(body.judgmentIds || []);
+  const retrieval = retrievalOptions(body.retrieval);
 
   assert(question.length >= 2, 400, "question_required", "A question is required.");
   assert(question.length <= 4000, 400, "question_too_long", "The question may not exceed 4000 characters.");
+  queryReadiness(retrieval);
 
-  const embedding = await embedQuery(question);
-  const chunks = await searchJudgmentChunks({ embedding, judgmentIds });
-  if (!chunks.length) {
+  let chunks = [];
+  if (retrieval.vector) {
+    const embedding = await embedQuery(question);
+    chunks = await searchJudgmentChunks({ embedding, judgmentIds });
+  }
+
+  let graphEvidence = [];
+  if (retrieval.graph) {
+    const graphNodeIds = [...new Set(chunks.flatMap((chunk) => chunk.graphNodeIds))];
+    const graphJudgmentIds = [
+      ...new Set([
+        ...judgmentIds,
+        ...chunks.map((chunk) => chunk.documentId).filter(Boolean),
+      ]),
+    ];
+    graphEvidence = await retrieveGraphEvidence({
+      judgmentIds: graphJudgmentIds,
+      nodeIds: graphNodeIds,
+      question,
+    });
+  }
+
+  if (!chunks.length && !graphEvidence.length) {
     sendJson(response, 200, {
       id: randomUUID(),
       answer: "No relevant evidence was found in the selected judgments.",
       sources: [],
+      retrieval: {
+        modes: retrieval,
+        vectorChunks: 0,
+        graphRelationships: 0,
+      },
     });
     return;
   }
 
-  const graphNodeIds = [...new Set(chunks.flatMap((chunk) => chunk.graphNodeIds))];
-  const graphJudgmentIds = [
-    ...new Set([
-      ...judgmentIds,
-      ...chunks.map((chunk) => chunk.documentId).filter(Boolean),
-    ]),
-  ];
-  let graphEvidence = [];
-  try {
-    graphEvidence = await retrieveGraphEvidence({
-      judgmentIds: graphJudgmentIds,
-      nodeIds: graphNodeIds,
-    });
-  } catch (error) {
-    if (config.neo4j.required) throw error;
-    console.warn(JSON.stringify({ level: "warn", message: "Neo4j retrieval unavailable; continuing with vector evidence", error: error.message }));
-  }
-
-  const answer = await answerWithEvidence({ question, chunks, graphEvidence });
-  const sources = chunks.map((chunk) => ({
-    judgment: chunk.judgment || chunk.documentId || "Judgment",
-    location: chunk.page ? `Page ${chunk.page}` : "Page unavailable",
-    documentId: chunk.documentId,
-    chunkId: chunk.chunkId,
-    score: chunk.score,
-  }));
+  const generated = await answerWithEvidence({ question, chunks, graphEvidence });
 
   sendJson(response, 200, {
     id: randomUUID(),
-    answer,
-    sources,
+    answer: generated.answer,
+    sources: generated.sources,
     retrieval: {
+      modes: retrieval,
       vectorChunks: chunks.length,
       graphRelationships: graphEvidence.length,
     },

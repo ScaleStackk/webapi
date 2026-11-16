@@ -35,14 +35,23 @@ Query all indexed judgments, or limit retrieval by supplying document IDs:
 POST /api/v1/query
 {
   "question": "What did the Supreme Court hold and why?",
-  "judgmentIds": []
+  "judgmentIds": [],
+  "retrieval": {
+    "vector": true,
+    "graph": true
+  }
 }
 ```
 
 The response contains the grounded `answer`, its ordered `sources`, and retrieval
-counts for Qdrant chunks and Neo4j relationships. When `judgmentIds` is empty,
-the API uses Qdrant's matching `document_id` values to select the corresponding
-Neo4j subgraphs automatically.
+counts for Qdrant chunks and Neo4j relationships. Set either retrieval flag to
+`false` to run only the other evidence path. At least one flag must be enabled.
+Omitting `retrieval` preserves the original behavior and enables both paths.
+When both paths are enabled and `judgmentIds` is empty, the API uses Qdrant's
+matching `document_id` values to constrain the corresponding Neo4j search.
+
+These flags affect query-time retrieval only. Every uploaded judgment continues
+to be processed independently by both the embedding and KG worker groups.
 
 ## Build and run
 
