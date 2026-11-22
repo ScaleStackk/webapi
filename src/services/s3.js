@@ -1,4 +1,5 @@
 import {
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -55,6 +56,18 @@ export async function createPdfUpload({ documentId }) {
       uri: `s3://${config.s3.bucket}/${key}`,
     },
   };
+}
+
+// Short-lived link for viewing a judgment PDF in the browser; sources append
+// "#page=N" so the PDF opens at the cited page.
+export async function createPdfViewUrl(documentId) {
+  const command = new GetObjectCommand({
+    Bucket: config.s3.bucket,
+    Key: judgmentObjectKey(documentId),
+    ResponseContentType: "application/pdf",
+    ResponseContentDisposition: "inline",
+  });
+  return getSignedUrl(s3Client(), command, { expiresIn: config.s3.presignSeconds });
 }
 
 export async function inspectUploadedPdf(documentId) {

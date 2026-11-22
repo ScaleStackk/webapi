@@ -9,7 +9,7 @@ import { ApiError, assert } from "./errors.js";
 import { readJson, sendJson } from "./http.js";
 import { embedQuery } from "./services/embedding.js";
 import { answerWithEvidence } from "./services/inference.js";
-import { retrieveGraphEvidence } from "./services/neo4j.js";
+import { retrieveCitingJudgments, retrieveGraphEvidence } from "./services/neo4j.js";
 import { searchJudgmentChunks } from "./services/qdrant.js";
 
 const DOCUMENT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -174,6 +174,24 @@ async function completeUpload(request, response) {
   });
 }
 
+// Attach a short-lived PDF link to each source so the UI can open the cited page.
+async function withPdfLinks(sources) {
+  const ids = [...new Set(sources.map((source) => source.documentId).filter(Boolean))];
+  if (!config.s3.bucket || !ids.length) return sources;
+  try {
+    const { createPdfViewUrl } = await import("./services/s3.js");
+    const urls = new Map(
+      await Promise.all(ids.map(async (id) => [id, await createPdfViewUrl(id)])),
+    );
+    return sources.map((source) =>
+      urls.has(source.documentId) ? { ...source, pdfUrl: urls.get(source.documentId) } : source,
+    );
+  } catch (error) {
+    console.error("Could not sign PDF links:", error.message);
+    return sources;
+  }
+}
+
 async function queryJudgments(request, response) {
   const body = await readJson(request, config.maxJsonBytes);
   const question = String(body.question || "").trim();
@@ -191,6 +209,7 @@ async function queryJudgments(request, response) {
   }
 
   let graphEvidence = [];
+  let citingEvidence = [];
   if (retrieval.graph) {
     const graphNodeIds = [...new Set(chunks.flatMap((chunk) => chunk.graphNodeIds))];
     const graphJudgmentIds = [
@@ -204,6 +223,20 @@ async function queryJudgments(request, response) {
       nodeIds: graphNodeIds,
       question,
     });
+    const caseNodeIds = [
+      ...new Set(
+        graphEvidence
+          .flatMap(({ source, target }) => [source, target])
+          .filter((node) => node?.type === "CASE")
+          .map((node) => node.id),
+      ),
+    ];
+    try {
+      citingEvidence = await retrieveCitingJudgments({ judgmentIds: graphJudgmentIds, caseNodeIds });
+    } catch (error) {
+      // Later-treatment evidence is an extra; answer without it.
+      console.error("Citing-judgment retrieval failed:", error.message);
+    }
   }
 
   if (!chunks.length && !graphEvidence.length) {
@@ -220,16 +253,18 @@ async function queryJudgments(request, response) {
     return;
   }
 
-  const generated = await answerWithEvidence({ question, chunks, graphEvidence });
+  const generated = await answerWithEvidence({ question, chunks, graphEvidence, citingEvidence });
 
   sendJson(response, 200, {
     id: randomUUID(),
     answer: generated.answer,
-    sources: generated.sources,
+    sources: await withPdfLinks(generated.sources),
+    warnings: generated.warnings,
     retrieval: {
       modes: retrieval,
       vectorChunks: chunks.length,
       graphRelationships: graphEvidence.length,
+      citingJudgments: citingEvidence.length,
     },
   });
 }
