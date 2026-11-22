@@ -58,6 +58,12 @@ entry (`caseLabel`, `overruledBy`, `documentId`, `page`, `evidence`) and
 that source is always included. `retrieval.citingJudgments` counts these
 results. Run `npm test` (or `node --test`) for the unit tests.
 
+Case sources may include `citationInfluence.distinctCitingJudgments`, the number
+of distinct uploaded judgments in this Neo4j corpus that cite that case. This is
+a corpus-scoped citation count; it is not a measure of legal validity or whether
+a case remains good law. A missing value means the source was not a case node or
+the optional count query was unavailable.
+
 Each source carries `page` and `evidence` (the chunk text or the exact quote
 behind a graph fact) when known, and `pdfUrl`, a GET link to the judgment PDF
 that expires after `S3_PRESIGN_SECONDS`, when S3 is configured. Add
