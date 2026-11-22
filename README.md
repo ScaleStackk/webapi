@@ -50,6 +50,20 @@ Omitting `retrieval` preserves the original behavior and enables both paths.
 When both paths are enabled and `judgmentIds` is empty, the API uses Qdrant's
 matching `document_id` values to constrain the corresponding Neo4j search.
 
+With graph retrieval on, the API also looks up other uploaded judgments that
+cite the cases behind the answer (needs kg_worker's cross-document graph). Their
+treatment (followed, distinguished, ...) is added to the evidence. When an
+uploaded judgment overrules one of those cases, the response has a `warnings`
+entry (`caseLabel`, `overruledBy`, `documentId`, `page`, `evidence`) and
+that source is always included. `retrieval.citingJudgments` counts these
+results. Run `npm test` (or `node --test`) for the unit tests.
+
+Each source carries `page` and `evidence` (the chunk text or the exact quote
+behind a graph fact) when known, and `pdfUrl`, a GET link to the judgment PDF
+that expires after `S3_PRESIGN_SECONDS`, when S3 is configured. Add
+`#page=N` to open it at the cited page. The bucket's CORS rules do not apply to
+plain navigation, but the EC2 role needs `s3:GetObject` on the judgment prefix.
+
 These flags affect query-time retrieval only. Every uploaded judgment continues
 to be processed independently by both the embedding and KG worker groups.
 
