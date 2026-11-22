@@ -9,7 +9,7 @@ import { ApiError, assert } from "./errors.js";
 import { readJson, sendJson } from "./http.js";
 import { embedQuery } from "./services/embedding.js";
 import { answerWithEvidence } from "./services/inference.js";
-import { retrieveCitingJudgments, retrieveGraphEvidence } from "./services/neo4j.js";
+import { retrieveCitationInfluence, retrieveCitingJudgments, retrieveGraphEvidence } from "./services/neo4j.js";
 import { searchJudgmentChunks } from "./services/qdrant.js";
 
 const DOCUMENT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -192,6 +192,26 @@ async function withPdfLinks(sources) {
   }
 }
 
+async function withCitationInfluence(sources) {
+  const caseNodeIds = [...new Set(sources.map((source) => source.caseNodeId).filter(Boolean))];
+  if (!caseNodeIds.length) return sources;
+  try {
+    const counts = await retrieveCitationInfluence(caseNodeIds);
+    return sources.map((source) => counts.has(source.caseNodeId)
+      ? {
+          ...source,
+          citationInfluence: {
+            distinctCitingJudgments: counts.get(source.caseNodeId),
+            scope: "uploaded_judgments",
+          },
+        }
+      : source);
+  } catch (error) {
+    console.error("Could not retrieve citation influence:", error.message);
+    return sources;
+  }
+}
+
 async function queryJudgments(request, response) {
   const body = await readJson(request, config.maxJsonBytes);
   const question = String(body.question || "").trim();
@@ -258,7 +278,7 @@ async function queryJudgments(request, response) {
   sendJson(response, 200, {
     id: randomUUID(),
     answer: generated.answer,
-    sources: await withPdfLinks(generated.sources),
+    sources: await withPdfLinks(await withCitationInfluence(generated.sources)),
     warnings: generated.warnings,
     retrieval: {
       modes: retrieval,

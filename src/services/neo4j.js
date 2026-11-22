@@ -177,3 +177,21 @@ export async function retrieveCitingJudgments({ judgmentIds, caseNodeIds }) {
     documentId: row[5] || null,
   }));
 }
+
+// Counts distinct uploaded judgments with a direct citation edge to each case.
+// This is corpus coverage/influence data, not a legal-status or "good law" check.
+export async function retrieveCitationInfluence(caseNodeIds) {
+  if (!config.neo4j.password || !caseNodeIds.length) return new Map();
+  const rows = await runStatement(`
+    MATCH (citing:GraphNode {type: 'CASE'})-[r:LEGAL_RELATION]->(cited:GraphNode {type: 'CASE'})
+    WHERE cited.id IN $caseNodeIds
+      AND citing.judgment_document_id = r.document_id
+      AND coalesce(cited.judgment_document_id, '') <> r.document_id
+      AND r.relation IN $treatments
+    RETURN cited.id, count(DISTINCT r.document_id)
+  `, {
+    caseNodeIds,
+    treatments: CITING_TREATMENTS,
+  });
+  return new Map(rows.map(([nodeId, count]) => [nodeId, Number(count) || 0]));
+}
