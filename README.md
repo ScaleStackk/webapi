@@ -15,6 +15,36 @@ separate container from Kafka, even when both containers share one EC2 instance.
 The browser never receives AWS credentials, Kafka credentials, Neo4j credentials,
 or Qdrant API keys.
 
+## Request and processing flow
+
+```mermaid
+flowchart LR
+  Browser -->|request short-lived URL| API[Web API]
+  API -->|presigned PUT URL| Browser
+  Browser -->|PDF upload| S3[(S3 judgment bucket)]
+  Browser -->|complete upload| API
+  API -->|judgment.uploaded| Kafka
+  Kafka --> KG[KG worker group]
+  Kafka --> EW[Embedding worker group]
+  KG --> Neo4j[(Neo4j)]
+  EW --> Qdrant[(Qdrant)]
+
+  Browser -->|question| API
+  API --> Embed[Embedding API]
+  Embed --> API
+  API --> Qdrant
+  API --> Neo4j
+  API --> LB[Inference load balancer]
+  LB --> Ollama[Ollama / Qwen]
+  Ollama --> API
+  API -->|answer, evidence, sources| Browser
+```
+
+The upload request returns before background processing finishes. The KG and
+embedding groups consume the same upload topic independently and populate their
+own stores. Query-time retrieval reads those stores and asks the inference
+service to answer from the selected evidence.
+
 ## API routes
 
 With the default `API_BASE_PATH=api/v1`:
